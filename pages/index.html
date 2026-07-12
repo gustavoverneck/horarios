@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Planejador de Horários Escolares</title>
+  <link rel="stylesheet" href="../elements/styles.css" />
+</head>
+<body>
+  <header>
+    <div class="hero">
+      <div>
+        <h1>Planejador de Horários Escolares</h1>
+        <p>
+          Cadastre professores, turmas, disciplinas e disponibilidade, monte as alocações por turma e exporte os horários por professor e por dia.
+          Tudo fica salvo no navegador para uso contínuo em um único arquivo HTML.
+        </p>
+      </div>
+      <div class="hero-actions">
+        <button class="secondary" id="btnLoadExample">Carregar exemplo</button>
+        <button class="primary" id="btnSaveAll">Salvar tudo</button>
+        <button class="ghost" id="btnExportJson">Exportar JSON</button>
+        <button class="ghost" id="btnImportJson">Importar JSON</button>
+        <button class="danger" id="btnResetAll">Limpar dados</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <nav class="tabs" aria-label="Áreas do planejador">
+      <button class="tab-button active" data-tab="teachers">Professores <span id="tabTeachersCount">0</span></button>
+      <button class="tab-button" data-tab="classes">Turmas <span id="tabClassesCount">0</span></button>
+      <button class="tab-button" data-tab="schedule">Horários <span id="tabCoverage">0%</span></button>
+    </nav>
+    <div class="grid">
+      <section class="overview tab-panel hidden" data-panel="schedule" aria-label="Resumo do planejamento">
+        <div class="metric"><span>Professores</span><strong id="metricTeachers">0</strong></div>
+        <div class="metric"><span>Turmas</span><strong id="metricClasses">0</strong></div>
+        <div class="metric"><span>Aulas previstas</span><strong id="metricRequired">0</strong></div>
+        <div class="metric"><span>Aulas alocadas</span><strong id="metricAllocated">0</strong></div>
+        <div class="metric accent"><span>Cobertura</span><strong id="metricCoverage">0%</strong></div>
+      </section>
+
+      <section class="card tab-panel hidden" data-panel="schedule" style="grid-column: span 12;">
+        <div class="card-header">
+          <div>
+            <h2>Preferências da geração</h2>
+            <p>Escolha o comportamento desejado. Restrições proibidas e conflitos nunca são ignorados.</p>
+          </div>
+          <span class="chip green">Motor inteligente</span>
+        </div>
+        <div class="card-body settings-grid">
+          <label class="setting"><input id="preferDouble" type="checkbox" /> <span><strong>Favorecer aulas geminadas</strong><small>Agrupa duas aulas seguidas da mesma disciplina.</small></span></label>
+          <label class="setting"><input id="avoidDouble" type="checkbox" /> <span><strong>Evitar aulas geminadas</strong><small>Distribui a disciplina ao longo da semana.</small></span></label>
+          <label class="setting"><input id="preferFreeDays" type="checkbox" /> <span><strong>Concentrar dias do professor</strong><small>Tenta preservar dias inteiros livres.</small></span></label>
+          <label class="setting"><input id="avoidGaps" type="checkbox" /> <span><strong>Evitar janelas</strong><small>Prefere horários consecutivos para professores.</small></span></label>
+          <label class="setting"><input id="allowPlanning" type="checkbox" /> <span><strong>Usar planejamento como último recurso</strong><small>Só utiliza se não houver horário livre viável.</small></span></label>
+          <div class="setting select-setting"><span><strong>Máximo de aulas/dia por professor</strong><small>Ajuda a equilibrar a carga diária.</small></span><select id="maxTeacherDaily"><option>3</option><option>4</option><option selected>5</option><option>6</option><option>7</option></select></div>
+        </div>
+      </section>
+
+      <section class="card tab-panel" data-panel="teachers" style="grid-column: span 12;">
+        <div class="card-header">
+          <div>
+            <h2>Professores</h2>
+            <p>Cadastre professores e marque horários livres, de planejamento e proibidos.</p>
+          </div>
+          <span class="chip green" id="teachersCount">0 professores</span>
+        </div>
+        <div class="card-body">
+          <div class="panel">
+            <div class="form-grid">
+              <div class="field large">
+                <label for="teacherName">Nome do professor</label>
+                <input id="teacherName" placeholder="Ex.: Maria Silva" />
+              </div>
+              <div class="field medium">
+                <label for="teacherColor">Cor</label>
+                <input id="teacherColor" type="color" value="#0f766e" />
+              </div>
+              <div class="field full">
+                <label for="teacherSubjects">Disciplinas lecionadas</label>
+                <input id="teacherSubjects" placeholder="Ex.: Matemática, Física, Robótica" />
+                <div class="helper">Separe as disciplinas por vírgulas.</div>
+              </div>
+              <div class="field full">
+                <label>Disponibilidade semanal</label>
+                <div class="helper">Clique ou arraste para alternar entre disponível, planejamento e indisponível.</div>
+                <div class="agenda-legend" aria-label="Legenda">
+                  <span><i class="legend-dot available"></i> Disponível</span>
+                  <span><i class="legend-dot planning"></i> Planejamento</span>
+                  <span><i class="legend-dot blocked"></i> Indisponível</span>
+                </div>
+                <div class="weekly-agenda-wrap">
+                  <div class="weekly-agenda" id="teacherAvailability"></div>
+                </div>
+              </div>
+            </div>
+            <div class="btn-row">
+              <button class="primary" id="btnAddTeacher">Adicionar professor</button>
+              <button class="ghost" id="btnClearTeacherForm">Limpar formulário</button>
+            </div>
+          </div>
+          <details class="collapsible-panel" id="teachersPanel">
+            <summary>
+              <span>Lista de professores</span>
+              <span class="chip green" id="teachersVisibleCount">0 visíveis</span>
+            </summary>
+            <div class="collapsible-content">
+              <div class="search-box">
+                <label for="teacherSearch">Buscar professor</label>
+                <input id="teacherSearch" placeholder="Nome, disponibilidade, cor..." />
+              </div>
+              <div class="list" id="teachersList"></div>
+            </div>
+          </details>
+        </div>
+      </section>
+
+      <section class="card tab-panel hidden" data-panel="classes" style="grid-column: span 12;">
+        <div class="card-header">
+          <div>
+            <h2>Turmas e disciplinas</h2>
+            <p>Defina turmas, disciplinas e os professores possíveis para cada disciplina da turma.</p>
+          </div>
+          <span class="chip warm" id="classesCount">0 turmas</span>
+        </div>
+        <div class="card-body">
+          <div class="panel">
+            <div class="form-grid">
+              <div class="field large">
+                <label for="className">Nome da turma</label>
+                <input id="className" placeholder="Ex.: 7º Ano A" />
+              </div>
+              <div class="field medium">
+                <label for="classShift">Turno</label>
+                <select id="classShift">
+                  <option value="Manhã">Manhã</option>
+                  <option value="Tarde">Tarde</option>
+                  <option value="Noite">Noite</option>
+                </select>
+              </div>
+              <div class="field medium">
+                <label for="classGrade">Etapa/Série</label>
+                <input id="classGrade" placeholder="Ex.: Fundamental II" />
+              </div>
+              <div class="field full">
+                <label for="classNotes">Observações</label>
+                <textarea id="classNotes" placeholder="Ex.: aula de reforço, laboratório, atendimento etc."></textarea>
+              </div>
+              <div class="field full">
+                <label>Horários disponíveis da turma</label>
+                <div class="helper">Clique ou arraste para marcar horários. Clique no nome de um dia para selecionar a coluna inteira.</div>
+                <div class="agenda-legend" aria-label="Legenda">
+                  <span><i class="legend-dot available"></i> Disponível</span>
+                  <span><i class="legend-dot blocked"></i> Indisponível</span>
+                </div>
+                <div class="weekly-agenda-wrap">
+                  <div class="weekly-agenda" id="classAvailability"></div>
+                </div>
+              </div>
+            </div>
+            <div class="btn-row">
+              <button class="primary" id="btnAddClass">Adicionar turma</button>
+              <button class="ghost" id="btnClearClassForm">Limpar formulário</button>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="form-grid">
+              <div class="field medium">
+                <label for="subjectClass">Turma</label>
+                <select id="subjectClass"></select>
+              </div>
+              <div class="field medium">
+                <label for="subjectName">Disciplina</label>
+                <input id="subjectName" placeholder="Ex.: Matemática" />
+              </div>
+              <div class="field medium">
+                <label for="subjectWeekly">Aulas/semana</label>
+                <input id="subjectWeekly" type="number" min="0" value="1" />
+              </div>
+              <div class="field full">
+                <label for="subjectTeachers">Professores possíveis</label>
+                <select id="subjectTeachers" multiple size="5"></select>
+                <div class="helper">Selecione todos os professores que podem assumir essa disciplina na turma.</div>
+              </div>
+            </div>
+            <div class="btn-row">
+              <button class="secondary" id="btnAddSubject">Adicionar disciplina à turma</button>
+            </div>
+          </div>
+          <details class="collapsible-panel" id="classesPanel">
+            <summary>
+              <span>Lista de turmas</span>
+              <span class="chip warm" id="classesVisibleCount">0 visíveis</span>
+            </summary>
+            <div class="collapsible-content">
+              <div class="search-box">
+                <label for="classSearch">Buscar turma</label>
+                <input id="classSearch" placeholder="Turma, disciplina, professor, observação..." />
+              </div>
+              <div class="list" id="classesList"></div>
+            </div>
+          </details>
+        </div>
+      </section>
+
+      <section class="card tab-panel hidden" data-panel="schedule" style="grid-column: span 12;">
+        <div class="card-header">
+          <div>
+            <h2>Grade de alocação</h2>
+            <p>Edite manualmente ou gere a grade completa respeitando restrições e preferências.</p>
+          </div>
+          <span class="chip" id="allocationsCount">0 alocações</span>
+        </div>
+        <div class="card-body">
+          <div class="panel">
+            <div class="schedule-grid">
+              <div class="field wide">
+                <label for="scheduleClass">Turma</label>
+                <select id="scheduleClass"></select>
+              </div>
+              <div class="field narrow">
+                <label for="scheduleDay">Dia</label>
+                <select id="scheduleDay"></select>
+              </div>
+              <div class="field narrow">
+                <label for="schedulePeriod">Horário</label>
+                <select id="schedulePeriod"></select>
+              </div>
+              <div class="field wide">
+                <label for="scheduleSubject">Disciplina</label>
+                <select id="scheduleSubject"></select>
+              </div>
+              <div class="field wide">
+                <label for="scheduleTeacher">Professor</label>
+                <select id="scheduleTeacher"></select>
+              </div>
+              <div class="field full">
+                <div class="helper">Os blocos vão de 13:00 a 19:10, com intervalo entre 15:30 e 15:50. Cada combinação turma + dia + horário deve ser única.</div>
+              </div>
+            </div>
+            <div class="btn-row">
+              <button class="primary" id="btnAddAllocation">Salvar alocação</button>
+              <button class="secondary" id="btnAutoAllocate">Alocação automática</button>
+              <button class="ghost" id="btnAutoSuggest">Sugerir professor</button>
+              <button class="danger" id="btnClearAllocations">Limpar alocações</button>
+            </div>
+            <div class="notice warn hidden" id="allocationWarning"></div>
+          </div>
+          <div class="table-wrap">
+            <table id="scheduleTable"></table>
+          </div>
+        </div>
+      </section>
+
+      <section class="card tab-panel hidden" data-panel="schedule" style="grid-column: span 6;">
+        <div class="card-header">
+          <div>
+            <h2>Exportação por professor</h2>
+            <p>Tabelas com turma, disciplina e horário de cada professor.</p>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="btn-row">
+            <button class="secondary" id="btnExportTeachersHtml">Exportar HTML</button>
+            <button class="ghost" id="btnCopyTeachersHtml">Copiar HTML</button>
+            <button class="ghost" id="btnExportTeachersCsv">Exportar CSV</button>
+          </div>
+          <div class="table-wrap" style="margin-top: 14px;">
+            <table id="teachersExportTable"></table>
+          </div>
+        </div>
+      </section>
+
+      <section class="card tab-panel hidden" data-panel="schedule" style="grid-column: span 6;">
+        <div class="card-header">
+          <div>
+            <h2>Exportação por dia</h2>
+            <p>Visão para coordenação com todos os professores que lecionam em cada dia.</p>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="btn-row">
+            <button class="secondary" id="btnExportDaysHtml">Exportar HTML</button>
+            <button class="ghost" id="btnCopyDaysHtml">Copiar HTML</button>
+            <button class="ghost" id="btnExportDaysCsv">Exportar CSV</button>
+          </div>
+          <div class="table-wrap" style="margin-top: 14px;">
+            <table id="daysExportTable"></table>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <input id="fileImport" type="file" accept="application/json" class="hidden" />
+
+  <script src="../scripts/app.js"></script>
+</body>
+</html>
