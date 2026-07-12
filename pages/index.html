@@ -286,9 +286,9 @@
             <select id="exportTeacherSelect"></select>
           </div>
           <div class="btn-row">
-            <button class="primary" id="btnExportTeachersPdf">Salvar em PDF</button>
-            <button class="secondary" id="btnExportTeachersHtml">Exportar HTML</button>
-            <button class="ghost" id="btnCopyTeachersHtml">Copiar HTML</button>
+            <button class="primary" id="btnExportAllTeachers">Exportar Horários Individuais</button>
+            <button class="secondary" id="btnExportTeacherMatrix">Exportar Geral</button>
+            <button class="primary" id="btnExportTeachersPdf">Salvar Individual</button>
             <button class="ghost" id="btnExportTeachersCsv">Exportar CSV</button>
           </div>
           <div class="table-wrap" style="margin-top: 14px;">
@@ -305,10 +305,13 @@
           </div>
         </div>
         <div class="card-body">
+          <div class="export-filter">
+            <label for="exportClassSelect">Turma</label>
+            <select id="exportClassSelect"></select>
+          </div>
           <div class="btn-row">
-            <button class="primary" id="btnExportDaysPdf">Salvar em PDF</button>
-            <button class="secondary" id="btnExportDaysHtml">Exportar HTML</button>
-            <button class="ghost" id="btnCopyDaysHtml">Copiar HTML</button>
+            <button class="primary" id="btnExportDaysPdf">Exportar Turma</button>
+            <button class="secondary" id="btnExportAllClasses">Exportar Todos</button>
             <button class="ghost" id="btnExportDaysCsv">Exportar CSV</button>
           </div>
           <div class="table-wrap" style="margin-top: 14px;">
