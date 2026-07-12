@@ -12,7 +12,7 @@
       <div>
         <h1>Planejador de Horários Escolares</h1>
         <p>
-          Cadastre professores, turmas, disciplinas e disponibilidade, monte as alocações por turma e exporte os horários por professor e por dia.
+          Cadastre professores, turmas, disciplinas e disponibilidade, monte as alocações e exporte os horários por professor e por turma.
           Tudo fica salvo no navegador para uso contínuo em um único arquivo HTML.
         </p>
       </div>
@@ -281,7 +281,12 @@
           </div>
         </div>
         <div class="card-body">
+          <div class="export-filter">
+            <label for="exportTeacherSelect">Professor</label>
+            <select id="exportTeacherSelect"></select>
+          </div>
           <div class="btn-row">
+            <button class="primary" id="btnExportTeachersPdf">Salvar em PDF</button>
             <button class="secondary" id="btnExportTeachersHtml">Exportar HTML</button>
             <button class="ghost" id="btnCopyTeachersHtml">Copiar HTML</button>
             <button class="ghost" id="btnExportTeachersCsv">Exportar CSV</button>
@@ -295,18 +300,19 @@
       <section class="card tab-panel hidden" data-panel="schedule" style="grid-column: span 6;">
         <div class="card-header">
           <div>
-            <h2>Exportação por dia</h2>
-            <p>Visão para coordenação com todos os professores que lecionam em cada dia.</p>
+            <h2>Exportação semanal por turma</h2>
+            <p>Cada turma em uma página, com a semana completa organizada por horário.</p>
           </div>
         </div>
         <div class="card-body">
           <div class="btn-row">
+            <button class="primary" id="btnExportDaysPdf">Salvar em PDF</button>
             <button class="secondary" id="btnExportDaysHtml">Exportar HTML</button>
             <button class="ghost" id="btnCopyDaysHtml">Copiar HTML</button>
             <button class="ghost" id="btnExportDaysCsv">Exportar CSV</button>
           </div>
           <div class="table-wrap" style="margin-top: 14px;">
-            <table id="daysExportTable"></table>
+            <div id="daysExportTable" class="day-class-pages"></div>
           </div>
         </div>
       </section>

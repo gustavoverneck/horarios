@@ -95,6 +95,7 @@ const els = {
   scheduleTable: document.getElementById('scheduleTable'),
   teachersExportTable: document.getElementById('teachersExportTable'),
   daysExportTable: document.getElementById('daysExportTable'),
+  exportTeacherSelect: document.getElementById('exportTeacherSelect'),
   slotModal: document.getElementById('slotModal'),
   slotModalTitle: document.getElementById('slotModalTitle'),
   slotModalContext: document.getElementById('slotModalContext'),
@@ -128,9 +129,11 @@ const els = {
   tabClassesCount: document.getElementById('tabClassesCount'),
   tabCoverage: document.getElementById('tabCoverage'),
   btnExportTeachersHtml: document.getElementById('btnExportTeachersHtml'),
+  btnExportTeachersPdf: document.getElementById('btnExportTeachersPdf'),
   btnCopyTeachersHtml: document.getElementById('btnCopyTeachersHtml'),
   btnExportTeachersCsv: document.getElementById('btnExportTeachersCsv'),
   btnExportDaysHtml: document.getElementById('btnExportDaysHtml'),
+  btnExportDaysPdf: document.getElementById('btnExportDaysPdf'),
   btnCopyDaysHtml: document.getElementById('btnCopyDaysHtml'),
   btnExportDaysCsv: document.getElementById('btnExportDaysCsv')
 };
@@ -531,6 +534,7 @@ function renderDropdowns() {
   fillSelect(els.subjectClass, state.classes.map((room) => ({ value: room.id, label: room.name })));
   fillSelect(els.scheduleClass, state.classes.map((room) => ({ value: room.id, label: room.name })));
   fillSelect(els.scheduleDay, DAYS.map((day) => ({ value: day, label: day })));
+  fillSelect(els.exportTeacherSelect, state.teachers.map((teacher) => ({ value: teacher.id, label: teacher.name })));
   updateSchedulePeriodOptions();
   renderSubjectTeacherPicker();
   updateSubjectClassLoad();
@@ -687,40 +691,47 @@ function renderScheduleTable() {
 }
 
 function renderTeachersExport() {
-  const header = ['Professor', ...DAYS.map((day) => day)];
-  let html = '<thead><tr>' + header.map((value) => `<th>${escapeHtml(value)}</th>`).join('') + '</tr></thead><tbody>';
-  if (!state.teachers.length) {
-    html += '<tr><td colspan="6">Sem professores cadastrados.</td></tr>';
-  } else {
-    state.teachers.forEach((teacher) => {
-      html += `<tr><th>${escapeHtml(teacher.name)}</th>`;
-      DAYS.forEach((day) => {
-        const rows = state.allocations
-          .filter((allocation) => allocation.teacherId === teacher.id && allocation.day === day)
-          .sort(compareAllocations);
-        const content = rows.length
-          ? rows.map((allocation) => `<div class="export-lesson"><strong>${escapeHtml(getPeriodLabel(allocation.period))}</strong><span>${escapeHtml(allocation.className)} · ${escapeHtml(allocation.subjectName)}</span></div>`).join('')
-          : '<span class="empty-mark">—</span>';
-        html += `<td class="calendar-table-cell ${rows.length ? 'occupied' : 'empty'}">${content}</td>`;
-      });
-      html += '</tr>';
-    });
+  const teacher = getTeacherById(els.exportTeacherSelect.value) || state.teachers[0];
+  if (!teacher) {
+    els.teachersExportTable.innerHTML = '<tbody><tr><td>Nenhum professor cadastrado.</td></tr></tbody>';
+    return;
   }
+  const slots = (teacher.shifts || ['Tarde']).flatMap((shift) => SHIFT_SLOTS[shift] || []);
+  const header = ['Horário', ...DAYS];
+  let html = '<thead><tr>' + header.map((value) => `<th>${escapeHtml(value)}</th>`).join('') + '</tr></thead><tbody>';
+  slots.forEach((slot) => {
+    html += `<tr><th><span class="export-time">${escapeHtml(slot.label)}</span><small>${escapeHtml(getShiftForPeriod(slot.key))}</small></th>`;
+    DAYS.forEach((day) => {
+      const allocation = state.allocations.find((item) => item.teacherId === teacher.id && item.day === day && item.period === slot.key);
+      html += allocation
+        ? `<td class="calendar-table-cell occupied"><div class="export-lesson" style="border-left-color:${escapeHtml(teacher.color)}"><strong>${escapeHtml(allocation.subjectName)}</strong><span>${escapeHtml(allocation.className)}</span></div></td>`
+        : '<td class="calendar-table-cell empty"><span class="empty-mark">—</span></td>';
+    });
+    html += '</tr>';
+  });
   html += '</tbody>';
   els.teachersExportTable.innerHTML = html;
 }
 
 function renderDaysExport() {
-  const header = ['Dia', 'Professores', 'Turmas/disciplinas'];
-  let html = '<thead><tr>' + header.map((value) => `<th>${escapeHtml(value)}</th>`).join('') + '</tr></thead><tbody>';
-  DAYS.forEach((day) => {
-    const allocations = state.allocations.filter((allocation) => allocation.day === day).sort(compareAllocations);
-    const teachers = unique(allocations.map((allocation) => getTeacherById(allocation.teacherId)?.name).filter(Boolean));
-    const classes = allocations.map((allocation) => `${escapeHtml(getPeriodLabel(allocation.period))} • ${escapeHtml(allocation.className)} • ${escapeHtml(allocation.subjectName)}`).join('<br>') || '—';
-    html += `<tr><th>${escapeHtml(day)}</th><td class="calendar-table-cell ${teachers.length ? 'occupied' : 'empty'}">${teachers.map((teacher) => `<span class="tag green">${escapeHtml(teacher)}</span>`).join('') || '<span class="empty-mark">—</span>'}</td><td class="calendar-table-cell ${allocations.length ? 'occupied' : 'empty'}">${classes === '—' ? '<span class="empty-mark">—</span>' : classes}</td></tr>`;
-  });
-  html += '</tbody>';
-  els.daysExportTable.innerHTML = html;
+  if (!state.classes.length) {
+    els.daysExportTable.innerHTML = '<div class="picker-empty">Nenhuma turma cadastrada.</div>';
+    return;
+  }
+  els.daysExportTable.innerHTML = state.classes.map((room, classIndex) => {
+    const slots = SHIFT_SLOTS[room.shift] || SHIFT_SLOTS.Tarde;
+    const rows = slots.map((slot) => {
+      const cells = DAYS.map((day) => {
+        const allocation = state.allocations.find((item) => item.classId === room.id && item.day === day && item.period === slot.key);
+        const teacher = allocation ? getTeacherById(allocation.teacherId) : null;
+        return allocation
+          ? `<td class="calendar-table-cell occupied"><div class="export-lesson" style="border-left-color:${escapeHtml(teacher?.color || '#6b7280')}"><strong>${escapeHtml(allocation.subjectName)}</strong><span>${escapeHtml(teacher?.name || allocation.teacherName || 'Professor removido')}</span></div></td>`
+          : '<td class="calendar-table-cell empty"><span class="empty-mark">—</span></td>';
+      }).join('');
+      return `<tr><th>${escapeHtml(slot.label)}</th>${cells}</tr>`;
+    }).join('');
+    return `<section class="class-day-page${classIndex === state.classes.length - 1 ? ' last' : ''}"><div class="class-day-heading"><div><span>Semana completa · ${escapeHtml(room.shift)}</span><h3>${escapeHtml(room.name)}</h3></div><strong>${escapeHtml(room.grade || 'Turma')}</strong></div><table><thead><tr><th>Horário</th>${DAYS.map((day) => `<th>${escapeHtml(day)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></section>`;
+  }).join('');
 }
 
 function renderAll() {
@@ -1449,6 +1460,7 @@ function renderPrintableHtml(title, tableHtml) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${escapeHtml(title)}</title>
   <style>
+    @page { size: landscape; margin: 12mm; }
     body { font-family: Arial, sans-serif; padding: 24px; color: #1f2937; }
     h1 { margin: 0 0 12px; }
     table { border-collapse: separate; border-spacing: 0; width: 100%; margin-bottom: 22px; border: 1px solid #d9e0dc; border-radius: 14px; overflow: hidden; }
@@ -1461,6 +1473,15 @@ function renderPrintableHtml(title, tableHtml) {
     .export-lesson strong, .export-lesson span { display: block; } .export-lesson strong { color: #0f766e; font-size: 11px; }
     .export-lesson span { color: #374151; font-size: 12px; }
     .tag { display: inline-block; padding: 3px 8px; margin: 0 6px 6px 0; border-radius: 999px; background: #e2e8f0; }
+    .empty-mark { color: #9ca3af; } .shift-badge { padding: 3px 7px; border-radius: 999px; background: #eef2ff; color: #4338ca; }
+    .subject-teacher { display: inline-flex; align-items: center; gap: 5px; } .subject-teacher i { width: 5px; height: 14px; border-radius: 99px; background: var(--teacher-color); }
+    .class-day-page { break-after: page; page-break-after: always; }
+    .class-day-page.last { break-after: auto; page-break-after: auto; }
+    .class-day-heading { display: flex; justify-content: space-between; align-items: center; margin: 0 0 10px; }
+    .class-day-heading span { color: #0f766e; font-size: 11px; font-weight: bold; text-transform: uppercase; }
+    .class-day-heading h3 { margin: 3px 0 0; font-size: 20px; }
+    .class-day-heading > strong { color: #6b7280; font-size: 11px; }
+    .class-day-page table { break-inside: avoid; page-break-inside: avoid; }
     .page-break { page-break-after: always; }
   </style>
 </head>
@@ -1480,13 +1501,32 @@ function downloadBlob(blob, filename) {
 }
 
 function exportTeachersHtml() {
-  const html = renderPrintableHtml('Horários por Professor', document.getElementById('teachersExportTable').outerHTML);
+  const teacher = getTeacherById(els.exportTeacherSelect.value);
+  const html = renderPrintableHtml(`Horário semanal · ${teacher?.name || 'Professor'}`, els.teachersExportTable.outerHTML);
   downloadBlob(new Blob([html], { type: 'text/html;charset=utf-8' }), 'horarios-por-professor.html');
 }
 
 function exportDaysHtml() {
-  const html = renderPrintableHtml('Horários por Dia', document.getElementById('daysExportTable').outerHTML);
-  downloadBlob(new Blob([html], { type: 'text/html;charset=utf-8' }), 'horarios-por-dia.html');
+  const html = renderPrintableHtml('Horários semanais por turma', els.daysExportTable.outerHTML);
+  downloadBlob(new Blob([html], { type: 'text/html;charset=utf-8' }), 'horarios-semanais-por-turma.html');
+}
+
+function printTableAsPdf(title, table) {
+  const popup = window.open('', '_blank');
+  if (!popup) return alert('Permita pop-ups para abrir a exportação em PDF.');
+  popup.document.open();
+  popup.document.write(renderPrintableHtml(title, table.outerHTML));
+  popup.document.close();
+  setTimeout(() => { popup.focus(); popup.print(); }, 300);
+}
+
+function exportTeachersPdf() {
+  const teacher = getTeacherById(els.exportTeacherSelect.value);
+  printTableAsPdf(`Horário semanal · ${teacher?.name || 'Professor'}`, els.teachersExportTable);
+}
+
+function exportDaysPdf() {
+  printTableAsPdf('Horários semanais por turma', els.daysExportTable);
 }
 
 async function copyTeachersHtml() {
@@ -1496,14 +1536,16 @@ async function copyTeachersHtml() {
 }
 
 async function copyDaysHtml() {
-  const html = renderPrintableHtml('Horários por Dia', document.getElementById('daysExportTable').outerHTML);
+  const html = renderPrintableHtml('Horários semanais por turma', els.daysExportTable.outerHTML);
   await navigator.clipboard.writeText(html);
-  alert('HTML dos horários por dia copiado.');
+  alert('HTML dos horários semanais por turma copiado.');
 }
 
 function exportTeachersCsv() {
+  const teacherId = els.exportTeacherSelect.value;
   const rows = [['Professor', 'Dia', 'Período', 'Turma', 'Disciplina']];
   state.allocations
+    .filter((allocation) => allocation.teacherId === teacherId)
     .slice()
     .sort(compareAllocations)
     .forEach((allocation) => {
@@ -1519,14 +1561,9 @@ function exportTeachersCsv() {
 }
 
 function exportDaysCsv() {
-  const rows = [['Dia', 'Professores', 'Detalhes']];
-  DAYS.forEach((day) => {
-    const allocations = state.allocations.filter((allocation) => allocation.day === day).sort(compareAllocations);
-    const teachers = unique(allocations.map((allocation) => allocation.teacherName || getTeacherById(allocation.teacherId)?.name || ''));
-    const details = allocations.map((allocation) => `${getPeriodLabel(allocation.period)} | ${allocation.className} | ${allocation.subjectName} | ${allocation.teacherName || ''}`).join(' ; ');
-    rows.push([day, teachers.join(' / '), details]);
-  });
-  downloadBlob(new Blob([toCsv(rows)], { type: 'text/csv;charset=utf-8;' }), 'horarios-por-dia.csv');
+  const rows = [['Turma', 'Dia', 'Horário', 'Turno', 'Disciplina', 'Professor']];
+  state.allocations.slice().sort((a, b) => a.className.localeCompare(b.className) || compareAllocations(a, b)).forEach((allocation) => rows.push([allocation.className, allocation.day, getPeriodLabel(allocation.period), getShiftForPeriod(allocation.period), allocation.subjectName, allocation.teacherName || getTeacherById(allocation.teacherId)?.name || '']));
+  downloadBlob(new Blob([toCsv(rows)], { type: 'text/csv;charset=utf-8;' }), 'horarios-semanais-por-turma.csv');
 }
 
 function toCsv(rows) {
@@ -1612,9 +1649,12 @@ function bindEvents() {
     renderScheduleTable();
   });
   els.scheduleSubject.addEventListener('change', updateTeacherOptions);
+  els.exportTeacherSelect.addEventListener('change', renderTeachersExport);
+  els.btnExportTeachersPdf.addEventListener('click', exportTeachersPdf);
   els.btnExportTeachersHtml.addEventListener('click', exportTeachersHtml);
   els.btnCopyTeachersHtml.addEventListener('click', copyTeachersHtml);
   els.btnExportTeachersCsv.addEventListener('click', exportTeachersCsv);
+  els.btnExportDaysPdf.addEventListener('click', exportDaysPdf);
   els.btnExportDaysHtml.addEventListener('click', exportDaysHtml);
   els.btnCopyDaysHtml.addEventListener('click', copyDaysHtml);
   els.btnExportDaysCsv.addEventListener('click', exportDaysCsv);
