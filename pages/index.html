@@ -84,6 +84,14 @@
                 <div class="helper">Separe as disciplinas por vírgulas.</div>
               </div>
               <div class="field full">
+                <label>Turnos de trabalho</label>
+                <div class="shift-picker" id="teacherShifts">
+                  <label><input type="checkbox" value="Manhã"> Manhã</label>
+                  <label><input type="checkbox" value="Tarde" checked> Tarde</label>
+                  <label><input type="checkbox" value="Noite"> Noite</label>
+                </div>
+              </div>
+              <div class="field full">
                 <label>Disponibilidade semanal</label>
                 <div class="helper">Clique ou arraste para alternar entre disponível, planejamento e indisponível.</div>
                 <div class="agenda-legend" aria-label="Legenda">
@@ -179,14 +187,23 @@
                 <label for="subjectWeekly">Aulas/semana</label>
                 <input id="subjectWeekly" type="number" min="0" value="1" />
               </div>
+              <div class="field medium">
+                <label>Carga atual da turma</label>
+                <div class="load-preview" id="subjectClassLoad"><strong>0</strong><span>aulas semanais</span></div>
+              </div>
               <div class="field full">
-                <label for="subjectTeachers">Professores possíveis</label>
-                <select id="subjectTeachers" multiple size="5"></select>
-                <div class="helper">Selecione todos os professores que podem assumir essa disciplina na turma.</div>
+                <div class="picker-heading">
+                  <div>
+                    <label>Professores possíveis</label>
+                    <div class="helper">Marque quem pode assumir a disciplina. Professores que já a lecionam aparecem primeiro.</div>
+                  </div>
+                  <span class="chip" id="selectedTeachersCount">0 selecionados</span>
+                </div>
+                <div class="teacher-picker" id="subjectTeachersPicker"></div>
               </div>
             </div>
             <div class="btn-row">
-              <button class="secondary" id="btnAddSubject">Adicionar disciplina à turma</button>
+              <button class="secondary" id="btnAddSubject">Adicionar disciplina à grade</button>
             </div>
           </div>
           <details class="collapsible-panel" id="classesPanel">
@@ -297,6 +314,28 @@
   </main>
 
   <input id="fileImport" type="file" accept="application/json" class="hidden" />
+
+  <div class="modal-backdrop hidden" id="slotModal" role="dialog" aria-modal="true" aria-labelledby="slotModalTitle">
+    <div class="slot-modal-card">
+      <div class="slot-modal-header">
+        <div><span class="eyebrow">Definir aula-base</span><h3 id="slotModalTitle">Horário da turma</h3></div>
+        <button class="icon-button" id="btnCloseSlotModal" aria-label="Fechar">×</button>
+      </div>
+      <div class="slot-context" id="slotModalContext"></div>
+      <div class="form-grid">
+        <div class="field full"><label for="slotSubject">Disciplina</label><select id="slotSubject"></select></div>
+        <div class="field full"><label for="slotTeacher">Professor</label><div class="slot-teacher-options" id="slotTeacher"></div></div>
+        <label class="setting field full"><input id="slotLocked" type="checkbox" checked><span><strong>Manter esta aula fixa</strong><small>A geração automática preservará esta escolha e completará o restante da grade.</small></span></label>
+      </div>
+      <div class="notice warn hidden" id="slotModalWarning"></div>
+      <div class="slot-modal-actions">
+        <button class="danger ghost hidden" id="btnRemoveSlot">Remover aula</button>
+        <span></span>
+        <button class="ghost" id="btnCancelSlot">Cancelar</button>
+        <button class="primary" id="btnSaveSlot">Salvar aula</button>
+      </div>
+    </div>
+  </div>
 
   <script src="../scripts/app.js"></script>
 </body>
