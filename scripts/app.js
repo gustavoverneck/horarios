@@ -67,9 +67,11 @@ const els = {
   scheduleTeacher: document.getElementById('scheduleTeacher'),
   btnAddAllocation: document.getElementById('btnAddAllocation'),
   btnAutoAllocate: document.getElementById('btnAutoAllocate'),
+  btnAnalyzeSchedule: document.getElementById('btnAnalyzeSchedule'),
   btnAutoSuggest: document.getElementById('btnAutoSuggest'),
   btnClearAllocations: document.getElementById('btnClearAllocations'),
   allocationWarning: document.getElementById('allocationWarning'),
+  diagnosticPanel: document.getElementById('diagnosticPanel'),
   scheduleTable: document.getElementById('scheduleTable'),
   teachersExportTable: document.getElementById('teachersExportTable'),
   daysExportTable: document.getElementById('daysExportTable'),
@@ -876,6 +878,7 @@ function buildSessionsForAutoAllocation() {
       const weekly = Math.max(0, Number(subject.weekly || 0));
       for (let index = 0; index < weekly; index += 1) {
         sessions.push({
+          instanceId: `${room.id}:${subject.id}:${index}`,
           classId: room.id,
           className: room.name,
           subjectId: subject.id,
@@ -911,7 +914,141 @@ function scoreChoice(session, teacher, day, period, allocations) {
   return score;
 }
 
-function autoAllocateAll() {
+function getFeasibleChoices(session, allocations, teacherSlots, classSlots) {
+  const room = getClassById(session.classId);
+  const choices = [];
+  DAYS.forEach((day) => PERIOD_KEYS.forEach((period) => {
+    if (classSlots.has(`${session.classId}-${day}-${period}`)) return;
+    if (room?.availability?.[day]?.[period] === 'forbidden') return;
+    getCandidateTeacherIds(session).forEach((teacherId) => {
+      const teacher = getTeacherById(teacherId);
+      if (!teacher || teacherSlots.has(`${teacherId}-${day}-${period}`)) return;
+      const availability = teacher.availability?.[day]?.[period] || DEFAULT_STATE;
+      if (availability !== 'free' && !(state.settings.allowPlanning && availability === 'planning')) return;
+      const dailyLoad = allocations.filter((a) => a.teacherId === teacherId && a.day === day).length;
+      if (dailyLoad >= Number(state.settings.maxTeacherDaily)) return;
+      choices.push({ teacher, day, period, score: scoreChoice(session, teacher, day, period, allocations) });
+    });
+  }));
+  return choices;
+}
+
+function solveWithAdaptiveMultiStart(sessions, attempts = 18) {
+  let best = { allocations: [], score: -Infinity, missing: sessions };
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const allocations = [];
+    const teacherSlots = new Set();
+    const classSlots = new Set();
+    const remaining = sessions.slice().sort((a, b) => getCandidateTeacherIds(a).length - getCandidateTeacherIds(b).length || Math.random() - .5);
+    let totalScore = 0;
+    while (remaining.length) {
+      const sampleSize = Math.min(remaining.length, 12);
+      let selectedIndex = 0;
+      let selectedChoices = null;
+      for (let index = 0; index < sampleSize; index += 1) {
+        const choices = getFeasibleChoices(remaining[index], allocations, teacherSlots, classSlots);
+        if (!selectedChoices || choices.length < selectedChoices.length || (choices.length === selectedChoices.length && Math.random() < .35)) {
+          selectedIndex = index;
+          selectedChoices = choices;
+          if (!choices.length) break;
+        }
+      }
+      const [session] = remaining.splice(selectedIndex, 1);
+      if (!selectedChoices?.length) continue;
+      selectedChoices.sort((a, b) => b.score - a.score);
+      const candidateWindow = Math.min(selectedChoices.length, attempt < 6 ? 1 : 3);
+      const choice = selectedChoices[Math.floor(Math.random() * candidateWindow)];
+      totalScore += choice.score;
+      allocations.push({ ...session, day: choice.day, period: choice.period, teacherId: choice.teacher.id, teacherName: choice.teacher.name });
+      teacherSlots.add(`${choice.teacher.id}-${choice.day}-${choice.period}`);
+      classSlots.add(`${session.classId}-${choice.day}-${choice.period}`);
+    }
+    const allocatedIds = new Set(allocations.map((a) => a.instanceId));
+    const missing = sessions.filter((session) => !allocatedIds.has(session.instanceId));
+    if (allocations.length > best.allocations.length || (allocations.length === best.allocations.length && totalScore > best.score)) {
+      best = { allocations, score: totalScore, missing };
+    }
+    if (!missing.length && attempt >= 10) break;
+  }
+  return best;
+}
+
+function getMissingSessionsFromCurrentSchedule() {
+  const allocatedCounts = new Map();
+  state.allocations.forEach((allocation) => {
+    const key = `${allocation.classId}:${allocation.subjectId}`;
+    allocatedCounts.set(key, (allocatedCounts.get(key) || 0) + 1);
+  });
+  const usedCounts = new Map();
+  return buildSessionsForAutoAllocation().filter((session) => {
+    const key = `${session.classId}:${session.subjectId}`;
+    const used = usedCounts.get(key) || 0;
+    usedCounts.set(key, used + 1);
+    return used >= (allocatedCounts.get(key) || 0);
+  });
+}
+
+function buildScheduleDiagnostics(missingSessions = null) {
+  if (missingSessions === null) missingSessions = getMissingSessionsFromCurrentSchedule();
+  const items = [];
+  state.classes.forEach((room) => {
+    const demand = room.subjects.reduce((sum, subject) => sum + Number(subject.weekly || 0), 0);
+    const capacity = DAYS.reduce((sum, day) => sum + PERIOD_KEYS.filter((period) => room.availability?.[day]?.[period] !== 'forbidden').length, 0);
+    if (demand > capacity) items.push({ type: 'error', title: `${room.name}: faltam ${demand - capacity} horários`, detail: `A turma exige ${demand} aulas, mas possui somente ${capacity} blocos disponíveis. Libere horários ou reduza a carga semanal.` });
+  });
+  state.classes.forEach((room) => room.subjects.forEach((subject) => {
+    const candidates = getCandidateTeacherIds(subject).map(getTeacherById).filter(Boolean);
+    if (!candidates.length) items.push({ type: 'error', title: `${room.name} · ${subject.name}: sem professor`, detail: 'Cadastre um professor que lecione a disciplina ou selecione professores possíveis na turma.' });
+    const usable = candidates.reduce((sum, teacher) => sum + DAYS.reduce((daySum, day) => daySum + PERIOD_KEYS.filter((period) => {
+      const teacherState = teacher.availability?.[day]?.[period] || DEFAULT_STATE;
+      return room.availability?.[day]?.[period] !== 'forbidden' && (teacherState === 'free' || (state.settings.allowPlanning && teacherState === 'planning'));
+    }).length, 0), 0);
+    if (candidates.length && usable < Number(subject.weekly || 0)) items.push({ type: 'error', title: `${room.name} · ${subject.name}: disponibilidade incompatível`, detail: `Há ${subject.weekly} aulas exigidas e apenas ${usable} combinações possíveis. Libere horários coincidentes entre turma e professor.` });
+  }));
+  state.teachers.forEach((teacher) => {
+    const forcedDemand = buildSessionsForAutoAllocation().filter((session) => {
+      const ids = getCandidateTeacherIds(session);
+      return ids.length === 1 && ids[0] === teacher.id;
+    }).length;
+    const usableDays = DAYS.map((day) => PERIOD_KEYS.filter((period) => {
+      const availability = teacher.availability?.[day]?.[period] || DEFAULT_STATE;
+      return availability === 'free' || (state.settings.allowPlanning && availability === 'planning');
+    }).length);
+    const capacity = usableDays.reduce((sum, count) => sum + Math.min(count, Number(state.settings.maxTeacherDaily)), 0);
+    if (forcedDemand > capacity) items.push({ type: 'error', title: `${teacher.name}: carga obrigatória acima da capacidade`, detail: `Há ${forcedDemand} aulas que dependem exclusivamente deste professor e capacidade para ${capacity}. Adicione outro professor habilitado ou libere horários.` });
+  });
+  const groupedMissing = new Map();
+  missingSessions.forEach((session) => {
+    const key = `${session.className} · ${session.subjectName}`;
+    groupedMissing.set(key, (groupedMissing.get(key) || 0) + 1);
+  });
+  groupedMissing.forEach((count, label) => items.push({ type: 'warning', title: `${label}: ${count} aula${count === 1 ? '' : 's'} não alocada${count === 1 ? '' : 's'}`, detail: 'Tente liberar um horário da turma, ampliar a disponibilidade dos professores, adicionar outro professor habilitado ou aumentar o limite diário.' }));
+  state.classes.forEach((room) => room.subjects.forEach((subject) => {
+    const allocated = state.allocations.filter((allocation) => allocation.classId === room.id && allocation.subjectId === subject.id).length;
+    if (allocated > Number(subject.weekly || 0)) items.push({ type: 'warning', title: `${room.name} · ${subject.name}: ${allocated - Number(subject.weekly || 0)} aula extra`, detail: 'Remova a alocação excedente para manter a carga semanal definida.' });
+  }));
+  const unavailableAllocations = state.allocations.filter((allocation) => {
+    const room = getClassById(allocation.classId);
+    const teacher = getTeacherById(allocation.teacherId);
+    const teacherState = teacher?.availability?.[allocation.day]?.[allocation.period];
+    return room?.availability?.[allocation.day]?.[allocation.period] === 'forbidden' || teacherState === 'forbidden';
+  });
+  if (unavailableAllocations.length) items.push({ type: 'error', title: `${unavailableAllocations.length} aula${unavailableAllocations.length === 1 ? '' : 's'} em horário indisponível`, detail: 'Mova essas aulas para uma interseção disponível entre a turma e o professor.' });
+  const conflicts = state.allocations.filter((allocation, index, list) => list.some((other, otherIndex) => otherIndex < index && other.teacherId === allocation.teacherId && other.day === allocation.day && other.period === allocation.period));
+  if (conflicts.length) items.push({ type: 'error', title: `${conflicts.length} conflito${conflicts.length === 1 ? '' : 's'} de professor`, detail: 'Há professor alocado simultaneamente em mais de uma turma. Remova ou substitua uma das aulas conflitantes.' });
+  if (!items.length) items.push({ type: 'success', title: 'Nenhuma incompatibilidade estrutural encontrada', detail: 'As capacidades, professores e disponibilidades são compatíveis. Preferências continuam sendo otimizadas durante a geração.' });
+  return items;
+}
+
+function renderScheduleDiagnostics(missingSessions = null) {
+  const items = buildScheduleDiagnostics(missingSessions);
+  const errors = items.filter((item) => item.type === 'error').length;
+  const warnings = items.filter((item) => item.type === 'warning').length;
+  els.diagnosticPanel.innerHTML = `<div class="diagnostic-header"><h3>Diagnóstico e sugestões</h3><span class="diagnostic-summary">${errors} erro${errors === 1 ? '' : 's'} · ${warnings} alerta${warnings === 1 ? '' : 's'}</span></div><div class="diagnostic-list">${items.map((item) => `<div class="diagnostic-item ${item.type}"><div class="diagnostic-icon">${item.type === 'success' ? '✓' : item.type === 'error' ? '!' : 'i'}</div><div><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.detail)}</span></div></div>`).join('')}</div>`;
+  els.diagnosticPanel.classList.remove('hidden');
+}
+
+async function autoAllocateAll() {
   if (!state.classes.length || !state.teachers.length) {
     alert('Cadastre pelo menos uma turma e um professor antes de gerar a alocação automática.');
     return;
@@ -919,76 +1056,23 @@ function autoAllocateAll() {
   if (!confirm('A alocação automática vai substituir todas as alocações atuais. Continuar?')) return;
 
   const sessions = buildSessionsForAutoAllocation();
-  const newAllocations = [];
-  const tempTeacherSlots = new Set();
-  const tempClassSlots = new Set();
-
-  const orderedSessions = sessions.sort((a, b) => {
-    const aCandidates = getCandidateTeacherIds(a).length;
-    const bCandidates = getCandidateTeacherIds(b).length;
-    if (aCandidates !== bCandidates) return aCandidates - bCandidates;
-    return a.subjectName.localeCompare(b.subjectName);
-  });
-
-  state.allocations = [];
-
-  orderedSessions.forEach((session) => {
-    let bestChoice = null;
-    DAYS.forEach((day) => {
-      PERIOD_KEYS.forEach((period) => {
-        const classSlotKey = `${session.classId}-${day}-${period}`;
-        if (tempClassSlots.has(classSlotKey)) return;
-        if (!canUseClassSlot(session.classId, day, period)) return;
-        if (getClassById(session.classId)?.availability?.[day]?.[period] === 'forbidden') return;
-
-        const candidateTeachers = getCandidateTeacherIds(session)
-          .map((teacherId) => getTeacherById(teacherId))
-          .filter(Boolean)
-          .filter((teacher) => {
-            const tempTeacherSlotKey = `${teacher.id}-${day}-${period}`;
-            const availability = teacher.availability?.[day]?.[period] || DEFAULT_STATE;
-            const allowed = availability === 'free' || (state.settings.allowPlanning && availability === 'planning');
-            const dailyLoad = newAllocations.filter((a) => a.teacherId === teacher.id && a.day === day).length;
-            return allowed && dailyLoad < Number(state.settings.maxTeacherDaily) && !tempTeacherSlots.has(tempTeacherSlotKey);
-          });
-
-        candidateTeachers.forEach((teacher) => {
-          const score = scoreChoice(session, teacher, day, period, newAllocations);
-          const candidate = { teacher, day, period, score };
-          if (!bestChoice || candidate.score > bestChoice.score) bestChoice = candidate;
-        });
-      });
-    });
-
-    if (!bestChoice) return;
-
-    const classSlotKey = `${session.classId}-${bestChoice.day}-${bestChoice.period}`;
-    const teacherSlotKey = `${bestChoice.teacher.id}-${bestChoice.day}-${bestChoice.period}`;
-    tempClassSlots.add(classSlotKey);
-    tempTeacherSlots.add(teacherSlotKey);
-    newAllocations.push({
-      id: uid('allocation'),
-      classId: session.classId,
-      className: session.className,
-      day: bestChoice.day,
-      period: bestChoice.period,
-      subjectId: session.subjectId,
-      subjectName: session.subjectName,
-      teacherId: bestChoice.teacher.id,
-      teacherName: bestChoice.teacher.name
-    });
-  });
-
-  state.allocations = newAllocations;
+  els.btnAutoAllocate.disabled = true;
+  els.btnAutoAllocate.textContent = 'Otimizando…';
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+  const result = solveWithAdaptiveMultiStart(sessions);
+  state.allocations = result.allocations.map((allocation) => ({ ...allocation, id: uid('allocation') }));
+  els.btnAutoAllocate.disabled = false;
+  els.btnAutoAllocate.textContent = 'Alocação automática';
   saveState();
 
   const total = sessions.length;
-  const filled = newAllocations.length;
+  const filled = result.allocations.length;
   const missing = total - filled;
   statusMessage = missing > 0
     ? `Alocação automática concluída: ${filled}/${total} aulas preenchidas. ${missing} não puderam ser alocadas por falta de disponibilidade.`
     : `Alocação automática concluída: ${filled}/${total} aulas preenchidas.`;
   updateWarning(statusMessage);
+  renderScheduleDiagnostics(result.missing);
 }
 
 function clearDayAllocations(classId, day) {
@@ -1007,17 +1091,73 @@ function updateWarning(text) {
 function loadExample() {
   if ((state.teachers.length || state.classes.length) && !confirm('Substituir os dados atuais por um exemplo completo?')) return;
   const teacherData = [
-    ['Ana Martins', '#0f766e', ['Matemática']],
-    ['Bruno Lima', '#2563eb', ['Português']],
-    ['Carla Souza', '#b45309', ['Ciências']]
+    { key: 'port1', name: 'Paula Nascimento', color: '#0f766e', subjects: ['Língua Portuguesa', 'Estudo Orientado'] },
+    { key: 'port2', name: 'Ricardo Almeida', color: '#14b8a6', subjects: ['Língua Portuguesa', 'Projeto de Vida'] },
+    { key: 'mat1', name: 'Marcelo Oliveira', color: '#2563eb', subjects: ['Matemática', 'Estudo Orientado'] },
+    { key: 'mat2', name: 'Juliana Costa', color: '#60a5fa', subjects: ['Matemática', 'Eletivas / Itinerários'] },
+    { key: 'bio', name: 'Beatriz Ferreira', color: '#16a34a', subjects: ['Biologia', 'Projeto de Vida'] },
+    { key: 'fis', name: 'Fábio Mendes', color: '#7c3aed', subjects: ['Física', 'Eletivas / Itinerários'] },
+    { key: 'qui', name: 'Camila Rodrigues', color: '#c026d3', subjects: ['Química', 'Estudo Orientado'] },
+    { key: 'hist', name: 'Helena Barbosa', color: '#b45309', subjects: ['História', 'Filosofia', 'Projeto de Vida'] },
+    { key: 'geo', name: 'Gustavo Santos', color: '#ea580c', subjects: ['Geografia', 'Sociologia', 'Eletivas / Itinerários'] },
+    { key: 'hum', name: 'Renata Lima', color: '#e11d48', subjects: ['História', 'Geografia', 'Estudo Orientado'] },
+    { key: 'ling', name: 'Alice Martins', color: '#0891b2', subjects: ['Língua Inglesa', 'Arte', 'Projeto de Vida'] },
+    { key: 'edfis', name: 'Diego Souza', color: '#65a30d', subjects: ['Educação Física', 'Arte', 'Eletivas / Itinerários'] }
   ];
-  state.teachers = teacherData.map(([name, color, subjects]) => normalizeTeacher({ id: uid('teacher'), name, color, subjects }));
-  state.classes = ['7º Ano A', '8º Ano A'].map((name) => normalizeClass({ id: uid('class'), name, shift: 'Tarde', grade: 'Fundamental II' }));
-  state.classes.forEach((room) => {
-    teacherData.forEach(([, , subjects], index) => room.subjects.push({ id: uid('subject'), name: subjects[0], weekly: index === 0 ? 5 : 3, teacherIds: [state.teachers[index].id] }));
+  const teacherIds = {};
+  state.teachers = teacherData.map((data, index) => {
+    const availability = createBlankAvailability();
+    const planningDay = DAYS[index % DAYS.length];
+    const secondPlanningDay = DAYS[(index + 2) % DAYS.length];
+    availability[planningDay][String((index % 3) + 1)] = 'planning';
+    availability[secondPlanningDay][String(6 + (index % 2))] = 'planning';
+    availability[DAYS[(index + 1) % DAYS.length]][String((index % 5) + 1)] = 'forbidden';
+    availability[DAYS[(index + 3) % DAYS.length]][String(7 - (index % 4))] = 'forbidden';
+    const teacher = normalizeTeacher({ id: uid('teacher'), ...data, availability });
+    teacherIds[data.key] = teacher.id;
+    return teacher;
   });
+
+  const candidates = {
+    'Língua Portuguesa': ['port1', 'port2'],
+    'Língua Inglesa': ['ling'],
+    'Arte': ['ling', 'edfis'],
+    'Educação Física': ['edfis'],
+    'Matemática': ['mat1', 'mat2'],
+    'Biologia': ['bio'],
+    'Física': ['fis'],
+    'Química': ['qui'],
+    'História': ['hist', 'hum'],
+    'Geografia': ['geo', 'hum'],
+    'Filosofia': ['hist'],
+    'Sociologia': ['geo'],
+    'Projeto de Vida': ['port2', 'bio', 'hist', 'ling'],
+    'Estudo Orientado': ['port1', 'mat1', 'qui', 'hum'],
+    'Eletivas / Itinerários': ['mat2', 'fis', 'geo', 'edfis']
+  };
+  const curriculum = [
+    ['Língua Portuguesa', 4], ['Língua Inglesa', 2], ['Arte', 1], ['Educação Física', 2],
+    ['Matemática', 4], ['Biologia', 2], ['Física', 2], ['Química', 2],
+    ['História', 2], ['Geografia', 2], ['Filosofia', 1], ['Sociologia', 1],
+    ['Projeto de Vida', 2], ['Estudo Orientado', 2], ['Eletivas / Itinerários', 6]
+  ];
+  const classNames = ['1ª Série A', '1ª Série B', '2ª Série A', '2ª Série B', '3ª Série A', '3ª Série B'];
+  state.classes = classNames.map((name) => normalizeClass({
+    id: uid('class'),
+    name,
+    shift: 'Tarde',
+    grade: 'Ensino Médio Integral',
+    notes: 'Cenário de teste com matriz curricular de 35 aulas semanais.',
+    availability: createBlankAvailability(),
+    subjects: curriculum.map(([subjectName, weekly]) => ({
+      id: uid('subject'),
+      name: subjectName,
+      weekly,
+      teacherIds: candidates[subjectName].map((key) => teacherIds[key])
+    }))
+  }));
   state.allocations = [];
-  statusMessage = 'Exemplo carregado. Ajuste as disponibilidades e clique em Alocação automática.';
+  statusMessage = 'Cenário carregado: 6 turmas, 12 professores e 210 aulas semanais para geração.';
   saveState();
 }
 
@@ -1207,6 +1347,7 @@ function bindEvents() {
   els.btnAddSubject.addEventListener('click', addSubject);
   els.btnAddAllocation.addEventListener('click', addAllocation);
   els.btnAutoAllocate.addEventListener('click', autoAllocateAll);
+  els.btnAnalyzeSchedule.addEventListener('click', () => renderScheduleDiagnostics());
   els.btnAutoSuggest.addEventListener('click', suggestTeacher);
   els.btnClearAllocations.addEventListener('click', clearAllocations);
   els.btnSaveAll.addEventListener('click', () => {

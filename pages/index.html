@@ -17,7 +17,7 @@
         </p>
       </div>
       <div class="hero-actions">
-        <button class="secondary" id="btnLoadExample">Carregar exemplo</button>
+        <button class="secondary" id="btnLoadExample">Carregar cenário de teste</button>
         <button class="primary" id="btnSaveAll">Salvar tudo</button>
         <button class="ghost" id="btnExportJson">Exportar JSON</button>
         <button class="ghost" id="btnImportJson">Importar JSON</button>
@@ -243,10 +243,12 @@
             <div class="btn-row">
               <button class="primary" id="btnAddAllocation">Salvar alocação</button>
               <button class="secondary" id="btnAutoAllocate">Alocação automática</button>
+              <button class="ghost" id="btnAnalyzeSchedule">Analisar restrições</button>
               <button class="ghost" id="btnAutoSuggest">Sugerir professor</button>
               <button class="danger" id="btnClearAllocations">Limpar alocações</button>
             </div>
             <div class="notice warn hidden" id="allocationWarning"></div>
+            <div class="diagnostic-panel hidden" id="diagnosticPanel" aria-live="polite"></div>
           </div>
           <div class="table-wrap">
             <table id="scheduleTable"></table>
