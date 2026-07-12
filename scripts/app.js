@@ -657,27 +657,24 @@ function renderScheduleTable() {
   }
   const room = state.classes.find((item) => item.id === els.scheduleClass.value) || state.classes[0];
   const roomSlots = SHIFT_SLOTS[room.shift] || SHIFT_SLOTS.Tarde;
-  const roomPeriodKeys = roomSlots.map((slot) => slot.key);
   const allocationsByKey = new Map(
     state.allocations
       .filter((allocation) => allocation.classId === room.id)
       .map((allocation) => [`${allocation.day}-${allocation.period}`, allocation])
   );
-  const header = ['Dia', ...roomSlots.map((slot) => slot.label), 'Ações'];
-  let html = '<thead><tr>' + header.map((value) => `<th>${escapeHtml(value)}</th>`).join('') + '</tr></thead><tbody>';
-  DAYS.forEach((day) => {
-    html += `<tr><th>${escapeHtml(day)}</th>`;
-    roomPeriodKeys.forEach((period) => {
-      const allocation = allocationsByKey.get(`${day}-${period}`);
+  let html = `<thead><tr><th>Horário</th>${DAYS.map((day) => `<th><div class="schedule-day-heading"><span>${escapeHtml(day)}</span><button class="clear-day-button" data-clear="${escapeHtml(day)}" title="Limpar ${escapeHtml(day)}" aria-label="Limpar aulas de ${escapeHtml(day)}">×</button></div></th>`).join('')}</tr></thead><tbody>`;
+  roomSlots.forEach((slot) => {
+    html += `<tr><th><span class="export-time">${escapeHtml(slot.label)}</span><small>${escapeHtml(room.shift)}</small></th>`;
+    DAYS.forEach((day) => {
+      const allocation = allocationsByKey.get(`${day}-${slot.key}`);
       if (!allocation) {
-        html += `<td class="calendar-table-cell empty" data-slot="true" data-day="${escapeHtml(day)}" data-period="${escapeHtml(period)}"><span>＋</span></td>`;
+        html += `<td class="calendar-table-cell empty" data-slot="true" data-day="${escapeHtml(day)}" data-period="${escapeHtml(slot.key)}"><span>＋</span></td>`;
         return;
       }
       const teacher = getTeacherById(allocation.teacherId);
       const color = teacher?.color || '#6b7280';
-      html += `<td class="calendar-table-cell occupied" data-slot="true" data-day="${escapeHtml(day)}" data-period="${escapeHtml(period)}"><div class="lesson-block ${allocation.locked ? 'fixed' : ''}" style="--lesson-color:${escapeHtml(color)}"><strong>${escapeHtml(allocation.subjectName)}</strong><span>${teacher ? escapeHtml(teacher.name) : 'Professor removido'}</span></div></td>`;
+      html += `<td class="calendar-table-cell occupied" data-slot="true" data-day="${escapeHtml(day)}" data-period="${escapeHtml(slot.key)}"><div class="lesson-block ${allocation.locked ? 'fixed' : ''}" style="--lesson-color:${escapeHtml(color)}"><strong>${escapeHtml(allocation.subjectName)}</strong><span>${teacher ? escapeHtml(teacher.name) : 'Professor removido'}</span></div></td>`;
     });
-    html += `<td><button class="ghost" data-clear="${day}">Limpar linha</button></td>`;
     html += '</tr>';
   });
   html += '</tbody>';
