@@ -1499,25 +1499,29 @@ function renderPrintableHtml(title, tableHtml) {
     .teacher-page-heading h2 { margin: 3px 0; font-size: 20px; }
     .teacher-page-heading small { color: #6b7280; }
     .teacher-print-page table { break-inside: avoid; page-break-inside: avoid; }
-    .teacher-matrix { table-layout: fixed; font-size: 7px; }
-    .teacher-matrix th, .teacher-matrix td { padding: 3px; text-align: center; overflow-wrap: anywhere; }
-    .teacher-matrix thead th { height: 82px; vertical-align: bottom; }
-    .teacher-matrix thead th:first-child { width: 24px; }
-    .teacher-matrix thead th:nth-child(2) { width: 58px; }
-    .matrix-teacher span { display: inline-block; writing-mode: vertical-rl; transform: rotate(180deg); font-size: 8px; }
-    .matrix-day { width: 24px; background: #f3f4f6; }
-    .matrix-day span { display: inline-block; writing-mode: vertical-rl; transform: rotate(180deg); }
-    .matrix-time strong, .matrix-time span, .matrix-class strong, .matrix-class span { display: block; }
-    .matrix-time span { color: #6b7280; font-size: 6px; }
-    .matrix-class { border-top: 3px solid #0f766e; background: #f4fbf8; }
-    .matrix-class strong { font-size: 7px; } .matrix-class span { color: #4b5563; font-size: 6px; }
-    .matrix-planning { background: #fff2cc; color: #92400e; font-size: 6px; }
-    .matrix-empty { color: #9ca3af; } .matrix-off { background: #e5e7eb; color: #9ca3af; }
+    .teacher-matrix { table-layout: fixed; border: 2px solid #111; border-radius: 0; font-family: Arial, sans-serif; }
+    .teacher-matrix th, .teacher-matrix td { height: 19px; padding: 2px 4px; border-color: #333; background: #fff; color: #111; text-align: center; overflow: hidden; }
+    .teacher-matrix thead th { height: 30px; font-size: 9px; vertical-align: middle; }
+    .teacher-matrix thead th:first-child { width: 58px; }
+    .teacher-matrix thead th:nth-child(2) { width: 32px; border-right: 2px solid #111; }
+    .teacher-matrix tr.matrix-day-start > * { border-top: 2px solid #111; }
+    .teacher-matrix tbody tr:first-child > * { border-top: 0; }
+    .matrix-day { width: 58px; border-right: 2px solid #111 !important; font-size: 8px; }
+    .matrix-time { width: 32px; border-right: 2px solid #111 !important; font-size: 9px; }
+    .matrix-class strong, .matrix-class span { display: block; line-height: 1.05; }
+    .matrix-class strong { font-size: 8px; }
+    .matrix-class span { margin-top: 1px; font-size: 7px; }
+    .matrix-planning { background: #eee !important; font-size: 7px; }
+    .matrix-empty { color: transparent !important; }
+    .matrix-teacher { font-size: 9px; font-weight: bold; text-transform: uppercase; }
+    .matrix-shift-page { break-after: page; page-break-after: always; }
+    .matrix-shift-page:last-child { break-after: auto; page-break-after: auto; }
+    .matrix-shift-title { margin: 0 0 4px; font-size: 9px; font-weight: bold; text-align: right; text-transform: uppercase; }
     .page-break { page-break-after: always; }
   </style>
 </head>
 <body>
-  <h1>${escapeHtml(title)}</h1>
+  ${title ? `<h1>${escapeHtml(title)}</h1>` : ''}
   ${tableHtml}
 </body>
 </html>`;
@@ -1553,27 +1557,41 @@ function exportAllTeachers() {
   printTableAsPdf('Horário completo dos professores', wrapper);
 }
 
+function matrixAbbreviation(value) {
+  const words = String(value || '').replaceAll('/', ' ').split(/\s+/).filter((word) => word && !['de', 'da', 'do', 'e'].includes(word.toLocaleLowerCase('pt-BR')));
+  if (!words.length) return '';
+  if (words.length === 1) return words[0].slice(0, 4).toLocaleUpperCase('pt-BR');
+  return words.map((word) => word[0]).join('').slice(0, 5).toLocaleUpperCase('pt-BR');
+}
+
 function exportTeacherMatrix() {
   if (!state.teachers.length) return alert('Nenhum professor cadastrado para exportar.');
   const usedShifts = SHIFTS.filter((shift) => state.teachers.some((teacher) => teacher.shifts.includes(shift)));
-  const slots = usedShifts.flatMap((shift) => SHIFT_SLOTS[shift] || []);
-  const teacherHeaders = state.teachers.map((teacher) => `<th class="matrix-teacher"><span>${escapeHtml(teacher.name)}</span></th>`).join('');
-  const rows = DAYS.flatMap((day) => slots.map((slot, slotIndex) => {
-    const cells = state.teachers.map((teacher) => {
-      const worksShift = teacher.shifts.includes(getShiftForPeriod(slot.key));
-      if (!worksShift) return '<td class="matrix-off">—</td>';
-      const allocation = state.allocations.find((item) => item.teacherId === teacher.id && item.day === day && item.period === slot.key);
-      if (allocation) return `<td class="matrix-class" style="border-top-color:${escapeHtml(teacher.color)}"><strong>${escapeHtml(allocation.subjectName)}</strong><span>${escapeHtml(allocation.className)}</span></td>`;
-      if (teacher.availability?.[day]?.[slot.key] === 'planning') return '<td class="matrix-planning"><strong>Planejamento</strong></td>';
-      return '<td class="matrix-empty">—</td>';
-    }).join('');
-    const dayCell = slotIndex === 0 ? `<th class="matrix-day" rowspan="${slots.length}"><span>${escapeHtml(day)}</span></th>` : '';
-    return `<tr>${dayCell}<th class="matrix-time"><strong>${escapeHtml(slot.label)}</strong><span>${escapeHtml(getShiftForPeriod(slot.key))}</span></th>${cells}</tr>`;
-  })).join('');
+  const pages = [];
+  usedShifts.forEach((shift) => {
+    const shiftTeachers = state.teachers.filter((teacher) => teacher.shifts.includes(shift));
+    const pageSize = 6;
+    for (let start = 0; start < shiftTeachers.length; start += pageSize) {
+      const teachers = shiftTeachers.slice(start, start + pageSize);
+      const slots = SHIFT_SLOTS[shift] || [];
+      const headers = teachers.map((teacher) => `<th class="matrix-teacher">${escapeHtml(teacher.name)}</th>`).join('');
+      const rows = DAYS.flatMap((day) => slots.map((slot, slotIndex) => {
+        const cells = teachers.map((teacher) => {
+          const allocation = state.allocations.find((item) => item.teacherId === teacher.id && item.day === day && item.period === slot.key);
+          if (allocation) return `<td class="matrix-class"><strong>${escapeHtml(matrixAbbreviation(allocation.subjectName))}</strong><span>${escapeHtml(matrixAbbreviation(allocation.className))}</span></td>`;
+          if (teacher.availability?.[day]?.[slot.key] === 'planning') return '<td class="matrix-planning"><strong>PLAN</strong></td>';
+          return '<td class="matrix-empty">—</td>';
+        }).join('');
+        const dayCell = slotIndex === 0 ? `<th class="matrix-day" rowspan="${slots.length}">${escapeHtml(day)}</th>` : '';
+        return `<tr class="${slotIndex === 0 ? 'matrix-day-start' : ''}">${dayCell}<th class="matrix-time">${slotIndex + 1}</th>${cells}</tr>`;
+      })).join('');
+      pages.push(`<section class="matrix-shift-page"><div class="matrix-shift-title">${escapeHtml(shift)} · Professores ${start + 1}–${start + teachers.length}</div><table class="teacher-matrix"><thead><tr><th>Dia</th><th>Aula</th>${headers}</tr></thead><tbody>${rows}</tbody></table></section>`);
+    }
+  });
   const wrapper = document.createElement('div');
   wrapper.className = 'teacher-matrix-export';
-  wrapper.innerHTML = `<style>@page { size: A3 landscape; margin: 8mm; }</style><table class="teacher-matrix"><thead><tr><th>Dia</th><th>Horário</th>${teacherHeaders}</tr></thead><tbody>${rows}</tbody></table>`;
-  printTableAsPdf('Mapa semanal geral dos professores', wrapper);
+  wrapper.innerHTML = `<style>@page { size: A3 landscape; margin: 8mm; }</style>${pages.join('')}`;
+  printTableAsPdf('', wrapper);
 }
 
 function exportDaysPdf() {
